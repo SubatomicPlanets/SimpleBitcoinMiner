@@ -24,7 +24,7 @@ To get started, you'll need to customize a few parts of the code before building
     Check the header files (*.h) for more tweakable fields. Resources like [learnmeabitcoin.com](https://learnmeabitcoin.com) and the [Bitcoin Wiki](https://en.bitcoin.it/wiki/Protocol_documentation) can help explain them. The defaults should work out of the box.  
     Also experiment with the CUDA kernel launch configuration in Hashing.cu (line 176) to optimize performance for your GPU if you want to.
 
-Once customized, build the project with these steps:  
+You can build the code with these steps:  
 ```
 git clone https://github.com/SubatomicPlanets/SimpleBitcoinMiner.git
 cd SimpleBitcoinMiner
@@ -58,7 +58,6 @@ cmake --build . --config Release
 
 ## Disclaimer
 I built this in two weeks with no prior Bitcoin or CMake experience.  
-Testing was minimal. If you mine a block there is a chance it doesn't get sent to the node properly and you won't get a reward...  
+Testing was minimal. If you mine a block it might not get sent to the node properly and you won't get a reward...  
 Let me know if you find any bugs or things that can be improved!  
-Use at your own risk. I’m not responsible for anything you do. I just want to share my code :)  
-Thanks!
+Use at your own risk. I’m not responsible for anything you do. I just want to share my code :)
