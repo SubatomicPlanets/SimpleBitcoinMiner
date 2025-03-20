@@ -26,6 +26,8 @@ To get started, you'll need to customize a few parts of the code before building
 
 Once customized, build the project with these steps:  
 ```
+git clone https://github.com/SubatomicPlanets/SimpleBitcoinMiner.git
+cd SimpleBitcoinMiner
 mkdir build
 cd build
 cmake ..
