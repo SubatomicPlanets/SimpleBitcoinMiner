@@ -67,7 +67,7 @@ int main() {
 		WSACleanup();
 		return 1;
 	}
-	uint32_t n_bits = 0x17028281; // This value will change sometimes when the bitcoin target changes, make sure it's up to date!
+	uint32_t n_bits = 0x17025105; // This value will change sometimes when the bitcoin target changes, make sure it's up to date!
 	uint32_t block_height = std::stoul(block_count_response.text);
 	uint8_t* block_height_bytes = reinterpret_cast<uint8_t*>(&block_height);
 
