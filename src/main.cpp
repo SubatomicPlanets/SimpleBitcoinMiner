@@ -14,15 +14,6 @@ extern "C" void hash_init(uint32_t* sha256_state, uint32_t target);
 extern "C" bool hash_iteration(BlockHeader* block_header);
 extern "C" void hash_cleanup();
 
-void printHex(const void* data, size_t size = 80) {
-	// Debug function to print bytes as hex
-	const unsigned char* bytes = static_cast<const unsigned char*>(data);
-	for (size_t i = 0; i < size; i++) {
-		printf("%02x", bytes[i]);
-	}
-	printf("\n");
-}
-
 int main() {
 	// Variables
 	CPU_SHA256_CTX cpu_sha256_ctx;
@@ -31,11 +22,11 @@ int main() {
 	// Set float print precision and print info
 	std::cout << std::setprecision(3);
 	std::cout << "Starting" << std::endl;
-
+	
 	// Start WSA
 	WSAData wsaData;
 	if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) return 1;
-
+	
 	// Create a socket
 	SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) {
@@ -43,7 +34,7 @@ int main() {
 		WSACleanup();
 		return 1;
 	}
-
+	
 	// Set the sockets connection data
 	SOCKADDR_IN addr;
 	addr.sin_family = AF_INET;
@@ -54,7 +45,7 @@ int main() {
 
 	// Print info
 	std::cout << "Getting blockchain data" << std::endl;
-
+	
 	// Get data from public HTTPS API (blockchain.com)
 	// Using a public API has downsides but was simple to implement
 	// Ideally you would connect to a node here instead
@@ -67,10 +58,10 @@ int main() {
 		WSACleanup();
 		return 1;
 	}
-	uint32_t n_bits = 0x17025105; // This value will change sometimes when the bitcoin target changes, make sure it's up to date!
+	uint32_t n_bits = 0x17023774; // This value will change sometimes when the bitcoin target changes, make sure it's up to date!
 	uint32_t block_height = std::stoul(block_count_response.text);
 	uint8_t* block_height_bytes = reinterpret_cast<uint8_t*>(&block_height);
-
+	
 	// Print info
 	std::cout << "Creating data structures" << std::endl;
 
@@ -106,7 +97,6 @@ int main() {
 	// Initialize CUDA hashing
 	cpu_sha256_init(&cpu_sha256_ctx);
 	cpu_sha256_transform(cpu_sha256_ctx.state, reinterpret_cast<uint8_t*>(&block_header));
-	cpu_sha256_3rounds(cpu_sha256_ctx.state, reinterpret_cast<uint8_t*>(&block_header)+64);
 	hash_init(cpu_sha256_ctx.state, (n_bits & 0x00FFFFFF));
 
 	// Print info
@@ -122,7 +112,7 @@ int main() {
 		// Hashing
 		if (hash_iteration(&block_header)) {
 			std::cout << "SUCCESS!" << std::endl;
-			printHex(&block_header);
+			std::cout << "NONCE: " << block_header.nonce << std::endl;
 			break;
 		}
 
