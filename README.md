@@ -11,18 +11,18 @@ It is obviously not profitable on a simple PC. On an RTX 3060 for example it wou
 ## How to Use
 To get started, you'll need to customize a few parts of the code before building and running it.
 - **Set the Node IP**:  
-    In main.cpp (line 52), update the IP address of the Bitcoin node you want to connect to once you mine a block.  
+    In main.cpp (line 43), update the IP address of the Bitcoin node you want to connect to once you mine a block.  
     In NetworkMessageTypes.h (line 24), set remote_ip to match the node IP. An explanation can be found [here](https://learnmeabitcoin.com/technical/networking/#message-payload).  
     The defaults for these values work for testing since it only connects to the node after mining a valid block which basically never happens...
 - **Set the Bitcoin Network Difficulty (n_bits)**:  
-    In main.cpp (line 70), update n_bits to the current Bitcoin network difficulty. I haven’t found a simple way to fetch this automatically yet. Check [this](https://learnmeabitcoin.com/technical/block/bits/) for more info.
+    In main.cpp (line 61), update n_bits to the current Bitcoin network difficulty. I haven’t found a simple way to fetch this automatically yet. Check [this](https://learnmeabitcoin.com/technical/block/bits/) for more info.
 - **Change the script to use your address**:  
     In CoinbaseTransaction.h (line 21), replace the pk_script with your Bitcoin wallet’s public key script. If you don’t change this and mine a block, the reward (3.125 BTC) will go to my wallet (the default)! Check [this](https://learnmeabitcoin.com/technical/script/p2pkh/#scriptpubkey) for more info.
 - **Add a Custom Blockchain Message**:  
     If you want to you can modify script[] in CoinbaseTransaction.h (line 11) to include a custom message (up to ~80 bytes) that will be embedded in the blockchain if you mine a block.
 - **Additional Customization**:  
     Check the header files (*.h) for more tweakable fields. Resources like [learnmeabitcoin.com](https://learnmeabitcoin.com) and the [Bitcoin Wiki](https://en.bitcoin.it/wiki/Protocol_documentation) can help explain them. The defaults should work out of the box.  
-    Also experiment with the CUDA kernel launch configuration in Hashing.cu (line 176) to optimize performance for your GPU if you want to.
+    Also experiment with the CUDA kernel launch configuration in Hashing.cu (line 186) to optimize performance for your GPU if you want to.
 
 You can build the code with these steps:  
 ```
