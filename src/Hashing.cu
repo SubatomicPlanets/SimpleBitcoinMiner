@@ -1,6 +1,8 @@
 #include <cuda_runtime.h>
 #include "device_launch_parameters.h"
 #include "BlockHeader.h"
+#include <iostream>
+#include <bit>
 
 // SHA-256 macros
 #define ROTRIGHT(a,b) (((a) >> (b)) | ((a) << (32-(b))))
@@ -36,14 +38,13 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 							   bool* __restrict__ success_out,
 							   uint32_t* __restrict__ nonce_out) {
 	if (*success_out == true) return;
-	uint32_t block_i = (blockIdx.x * blockDim.x + threadIdx.x) << 10;
 	uint32_t a, b, c, d, e, f, g, h, t1;
 	uint32_t m[58] = { 0 }; // 58 instead of 64 to save registers and computations - initialize all to 0
+	uint32_t block_i = (blockIdx.x * blockDim.x + threadIdx.x) << 10;
 
 	// Loop iterations (1024 iterations needs to be the same as above block_i bitshift amount)
-#pragma unroll
 	for (uint16_t iter = 0; iter < 1024; ++iter) {
-		// Set state to the precomputed result of the first chunk + 3 rounds of second chunk
+		// Set state to the precomputed result of the first chunk
 		a = sha256_state_in[0];
 		b = sha256_state_in[1];
 		c = sha256_state_in[2];
@@ -54,12 +55,12 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 		h = sha256_state_in[7];
 
 		// Prepare m for first hashing
-		m[0] = header_m_in[0];   // Block header end
+		m[0] = header_m_in[0]; // Block header end
 		m[1] = header_m_in[1];
 		m[2] = header_m_in[2];
-		m[3] = (block_i + iter); // Nonce = block_i+iter
-		m[4] = 0x80000000;       // Append binary 1
-		m[9] = 640;              // Size in bits (of entire block header)
+		m[3] = block_i + iter; // Nonce
+		m[4] = 0x80000000; // Append binary 1
+		m[9] = 640; // Size in bits (of entire block header)
 #pragma unroll
 		for (uint8_t i = 16; i < 64; ++i) {
 			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure generated values are correct
@@ -70,10 +71,10 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 			m[i - 6] = t1 + t2 + t3 + t4;
 		}
 
-		// First hash (finish second chunk, first chunk and first 3 rounds of second chunk are precomputed on CPU)
+		// First hash (finish second chunk, first chunk is already precomputed on CPU)
 #pragma unroll
-		for (uint8_t i = 3; i < 64; ++i) {
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it all works
+		for (uint8_t i = 0; i < 64; ++i) {
+			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it works
 			if (i <= 4) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i];
 			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i];
 			else t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i - 6];
@@ -97,8 +98,9 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 		m[5] = f + sha256_state_in[5];
 		m[6] = g + sha256_state_in[6];
 		m[7] = h + sha256_state_in[7];
-		m[8] = 0x80000000;             // Append binary 1
-		m[9] = 256;                    // Length in bits
+		m[8] = 0x80000000; // Append binary 1
+		m[9] = 256; // Size in bits
+
 #pragma unroll
 		for (uint8_t i = 16; i < 63; ++i) { // (1 round less for performance since its not needed)
 			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure generated values are correct
@@ -122,7 +124,7 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 		// Second hash (1 round less for performance since its not needed)
 #pragma unroll
 		for (uint8_t i = 0; i < 63; ++i) {
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it all works
+			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it works
 			if (i <= 8) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i];
 			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i];
 			else t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i - 6];
@@ -131,14 +133,13 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 			f = e;
 			e = d + t1;
 			// Compare and set success (using early exiting)
-			// Values like 0xa41f32e7 may seem random here but these values make sense trust me
-			if (i == 60 && e != 0xa41f32e7) break;
-			else if (i == 61 && e != 0xe07c2655) break;
+			if (i == 60 && e != 0xa41f32e7) break; // 0xa41f32e7 == -0x5be0cd19 (negative initial h)
+			else if (i == 61 && e != 0xe07c2655) break; // 0xe07c2655 == -0x1f83d9ab (negative initial g)
 			else if (i == 62) {
-				e += 0x9b05688c;
+				e += 0x9b05688c; // Add inital f
 				e = ((e >> 24) & 0x000000ff) | ((e >> 8) & 0x0000ff00) | ((e << 8) & 0x00ff0000) | ((e << 24) & 0xff000000);
 				if (e < *cuda_target_in) {
-					*nonce_out = (block_i + iter);
+					*nonce_out = block_i + iter; // Nonce
 					*success_out = true;
 					break;
 				}
@@ -150,6 +151,14 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 			a = t1;
 		}
 	}
+}
+
+inline uint32_t reverse_bytes(uint32_t value) {
+	// Helper function that reverses byte order
+	return ((value >> 24) & 0x000000FF) |
+		((value >> 8) & 0x0000FF00) |
+		((value << 8) & 0x00FF0000) |
+		((value << 24) & 0xFF000000);
 }
 
 extern "C" void hash_init(uint32_t* sha256_state, uint32_t target) {
@@ -168,23 +177,22 @@ extern "C" void hash_init(uint32_t* sha256_state, uint32_t target) {
 extern "C" bool hash_iteration(BlockHeader* block_header) {
 	// Format the block header data to send to kernal
 	uint32_t m_header_in[3];
-	m_header_in[0] = *reinterpret_cast<const uint32_t*>(&block_header->merkle_root[28]);
-	m_header_in[1] = block_header->current_time;
-	m_header_in[2] = block_header->n_bits;
+	m_header_in[0] = reverse_bytes(*reinterpret_cast<const uint32_t*>(&block_header->merkle_root[28]));
+	m_header_in[1] = reverse_bytes(block_header->current_time);
+	m_header_in[2] = reverse_bytes(block_header->n_bits);
+
 	// Call the hashing kernel
 	cudaMemcpy(cuda_header_m_in, m_header_in, 12, cudaMemcpyHostToDevice);
 	hash_and_check<<<16384, 256>>>(cuda_header_m_in, cuda_target_in, cuda_sha256_state_in, cuda_success_out, cuda_nonce_out);
 	cudaDeviceSynchronize();
+
 	// Get the result and return
 	bool success;
 	cudaMemcpy(&success, cuda_success_out, 1, cudaMemcpyDeviceToHost);
 	if (success) {
-		uint32_t tmp_nonce;
-		cudaMemcpy(&tmp_nonce, cuda_nonce_out, 4, cudaMemcpyDeviceToHost);
-		block_header->nonce = ((tmp_nonce >> 24) & 0x000000ff) |
-			((tmp_nonce >> 8) & 0x0000ff00) |
-			((tmp_nonce << 8) & 0x00ff0000) |
-			((tmp_nonce << 24) & 0xff000000);
+		uint32_t nonce;
+		cudaMemcpy(&nonce, cuda_nonce_out, 4, cudaMemcpyDeviceToHost);
+		block_header->nonce = reverse_bytes(nonce);
 		return true;
 	}
 	return false;
