@@ -1,8 +1,6 @@
 #include <cuda_runtime.h>
 #include "device_launch_parameters.h"
 #include "BlockHeader.h"
-#include <iostream>
-#include <bit>
 
 // SHA-256 macros
 #define ROTRIGHT(a,b) (((a) >> (b)) | ((a) << (32-(b))))
@@ -26,58 +24,63 @@ __constant__ uint32_t dev_k[64] = {
 };
 
 // CUDA device memory pointers
-uint32_t* cuda_header_m_in;
+uint32_t* cuda_header_w_in;
 uint32_t* cuda_target_in;
+uint32_t* cuda_sha256_vars_in;
 uint32_t* cuda_sha256_state_in;
 bool* cuda_success_out;
 uint32_t* cuda_nonce_out;
 
-__global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
+__global__ void hash_and_check(const uint32_t* __restrict__ header_w_in,
 							   const uint32_t* __restrict__ cuda_target_in,
+							   const uint32_t* __restrict__ sha256_vars_in,
 							   const uint32_t* __restrict__ sha256_state_in,
 							   bool* __restrict__ success_out,
 							   uint32_t* __restrict__ nonce_out) {
-	if (*success_out == true) return;
+	if (*success_out == true) [[unlikely]] { return; }
 	uint32_t a, b, c, d, e, f, g, h, t1;
-	uint32_t m[58] = { 0 }; // 58 instead of 64 to save registers and computations - initialize all to 0
+	uint32_t w[16]; // Sliding window
 	uint32_t block_i = (blockIdx.x * blockDim.x + threadIdx.x) << 10;
+
+	__shared__ uint32_t s_dev_k[64];
+	if (threadIdx.x < 64) s_dev_k[threadIdx.x] = dev_k[threadIdx.x];
+	__syncthreads();
 
 	// Loop iterations (1024 iterations needs to be the same as above block_i bitshift amount)
 	for (uint16_t iter = 0; iter < 1024; ++iter) {
-		// Set state to the precomputed result of the first chunk
-		a = sha256_state_in[0];
-		b = sha256_state_in[1];
-		c = sha256_state_in[2];
-		d = sha256_state_in[3];
-		e = sha256_state_in[4];
-		f = sha256_state_in[5];
-		g = sha256_state_in[6];
-		h = sha256_state_in[7];
+		// Prepare w for first hashing
+		w[0] = header_w_in[0]; // Block header end
+		w[1] = header_w_in[1];
+		w[2] = header_w_in[2];
+		w[3] = block_i + iter; // Nonce
+		w[4] = 0x80000000; // Append binary 1
+		w[5] = w[6] = w[7] = w[8] = w[9] = w[10] = w[11] = w[12] = w[13] = w[14] = 0;
+		w[15] = 640; // Size in bits (of entire block header)
 
-		// Prepare m for first hashing
-		m[0] = header_m_in[0]; // Block header end
-		m[1] = header_m_in[1];
-		m[2] = header_m_in[2];
-		m[3] = block_i + iter; // Nonce
-		m[4] = 0x80000000; // Append binary 1
-		m[9] = 640; // Size in bits (of entire block header)
-#pragma unroll
-		for (uint8_t i = 16; i < 64; ++i) {
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure generated values are correct
-			uint32_t t1 = (i >= 17) ? SIG1(m[i - 8]) : 0;
-			uint32_t t2 = (i >= 22) ? m[i - 13] : 0;
-			uint32_t t3 = (i >= 30) ? SIG0(m[i - 21]) : ((i <= 19) ? SIG0(m[i - 15]) : 0);
-			uint32_t t4 = (i >= 31) ? m[i - 22] : ((i <= 20) ? m[i - 16] : 0);
-			m[i - 6] = t1 + t2 + t3 + t4;
-		}
+		// Set state to the precomputed result of the first chunk + 3 rounds of second chunk
+		a = sha256_vars_in[0];
+		b = sha256_vars_in[1];
+		c = sha256_vars_in[2];
+		d = sha256_vars_in[3];
+		e = sha256_vars_in[4];
+		f = sha256_vars_in[5];
+		g = sha256_vars_in[6];
+		h = sha256_vars_in[7];
 
-		// First hash (finish second chunk, first chunk is already precomputed on CPU)
+		// First hash (finish second chunk, first chunk + 3 rounds of second chunk are already precomputed on CPU)
 #pragma unroll
-		for (uint8_t i = 0; i < 64; ++i) {
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it works
-			if (i <= 4) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i];
-			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i];
-			else t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i - 6];
+		for (uint8_t i = 3; i < 64; ++i) {
+			if (i == 3) t1 = h + EP1(e) + CH(e, f, g) + 0xe9b5dba5 + block_i + iter;
+			else if (i == 4) t1 = h + EP1(e) + CH(e, f, g) + 0xb956c25b; // s_dev_k[i] + w[i]
+			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i];
+			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + 0xc19bf3f4; // s_dev_k[i] + w[i]
+			else {
+				uint32_t new_w = SIG1(w[14]) + w[9] + SIG0(w[1]) + w[0];
+				#pragma unroll
+				for (uint8_t j = 0; j < 15; ++j) w[j] = w[j + 1];
+				w[15] = new_w;
+				t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + new_w;
+			}
 			h = g;
 			g = f;
 			f = e;
@@ -89,27 +92,18 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 			a = t1;
 		}
 
-		// Prepare m for second hashing
-		m[0] = a + sha256_state_in[0];
-		m[1] = b + sha256_state_in[1];
-		m[2] = c + sha256_state_in[2];
-		m[3] = d + sha256_state_in[3];
-		m[4] = e + sha256_state_in[4];
-		m[5] = f + sha256_state_in[5];
-		m[6] = g + sha256_state_in[6];
-		m[7] = h + sha256_state_in[7];
-		m[8] = 0x80000000; // Append binary 1
-		m[9] = 256; // Size in bits
-
-#pragma unroll
-		for (uint8_t i = 16; i < 63; ++i) { // (1 round less for performance since its not needed)
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure generated values are correct
-			uint32_t t1 = (i >= 17) ? SIG1(m[i - 8]) : 0;
-			uint32_t t2 = (i >= 22) ? m[i - 13] : 0;
-			uint32_t t3 = (i >= 30) ? SIG0(m[i - 21]) : ((i <= 23) ? SIG0(m[i - 15]) : 0);
-			uint32_t t4 = (i >= 31) ? m[i - 22] : ((i <= 24) ? m[i - 16] : 0);
-			m[i - 6] = t1 + t2 + t3 + t4;
-		}
+		// Prepare w for second hashing
+		w[0] = a + sha256_state_in[0];
+		w[1] = b + sha256_state_in[1];
+		w[2] = c + sha256_state_in[2];
+		w[3] = d + sha256_state_in[3];
+		w[4] = e + sha256_state_in[4];
+		w[5] = f + sha256_state_in[5];
+		w[6] = g + sha256_state_in[6];
+		w[7] = h + sha256_state_in[7];
+		w[8] = 0x80000000; // Append binary 1
+		w[9] = w[10] = w[11] = w[12] = w[13] = w[14] = 0;
+		w[15] = 256; // Size in bits
 
 		// Reset state to SHA-256 definitions for second hashing
 		a = 0x6a09e667;
@@ -124,10 +118,16 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 		// Second hash (1 round less for performance since its not needed)
 #pragma unroll
 		for (uint8_t i = 0; i < 63; ++i) {
-			// Since m only has 58 elements, if statements (optimized due to unrolling) make sure it works
-			if (i <= 8) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i];
-			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + dev_k[i];
-			else t1 = h + EP1(e) + CH(e, f, g) + dev_k[i] + m[i - 6];
+			if (i < 9) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + w[i];
+			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i];
+			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + 0xc19bf274; // s_dev_k[i] + w[i]
+			else {
+				uint32_t new_w = SIG1(w[14]) + w[9] + SIG0(w[1]) + w[0];
+				#pragma unroll
+				for (uint8_t j = 0; j < 15; ++j) w[j] = w[j + 1];
+				w[15] = new_w;
+				t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + new_w;
+			}
 			h = g;
 			g = f;
 			f = e;
@@ -138,7 +138,7 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_m_in,
 			else if (i == 62) {
 				e += 0x9b05688c; // Add inital f
 				e = ((e >> 24) & 0x000000ff) | ((e >> 8) & 0x0000ff00) | ((e << 8) & 0x00ff0000) | ((e << 24) & 0xff000000);
-				if (e < *cuda_target_in) {
+				if (e < *cuda_target_in) [[unlikely]] {
 					*nonce_out = block_i + iter; // Nonce
 					*success_out = true;
 					break;
@@ -163,9 +163,10 @@ inline uint32_t reverse_bytes(uint32_t value) {
 
 extern "C" void hash_init(uint32_t* sha256_state, uint32_t target) {
 	// Allocate memory on device and set some initial data
-	cudaMalloc(&cuda_header_m_in, 12);
+	cudaMalloc(&cuda_header_w_in, 12);
 	cudaMalloc(&cuda_target_in, 4);
 	cudaMemcpy(cuda_target_in, &target, 4, cudaMemcpyHostToDevice);
+	cudaMalloc(&cuda_sha256_vars_in, 32);
 	cudaMalloc(&cuda_sha256_state_in, 32);
 	cudaMemcpy(cuda_sha256_state_in, sha256_state, 32, cudaMemcpyHostToDevice);
 	cudaMalloc(&cuda_success_out, 1);
@@ -174,7 +175,7 @@ extern "C" void hash_init(uint32_t* sha256_state, uint32_t target) {
 	cudaDeviceSynchronize();
 }
 
-extern "C" bool hash_iteration(BlockHeader* block_header) {
+extern "C" bool hash_iteration(BlockHeader* block_header, uint32_t* sha256_vars) {
 	// Format the block header data to send to kernal
 	uint32_t m_header_in[3];
 	m_header_in[0] = reverse_bytes(*reinterpret_cast<const uint32_t*>(&block_header->merkle_root[28]));
@@ -182,8 +183,9 @@ extern "C" bool hash_iteration(BlockHeader* block_header) {
 	m_header_in[2] = reverse_bytes(block_header->n_bits);
 
 	// Call the hashing kernel
-	cudaMemcpy(cuda_header_m_in, m_header_in, 12, cudaMemcpyHostToDevice);
-	hash_and_check<<<16384, 256>>>(cuda_header_m_in, cuda_target_in, cuda_sha256_state_in, cuda_success_out, cuda_nonce_out);
+	cudaMemcpy(cuda_header_w_in, m_header_in, 12, cudaMemcpyHostToDevice);
+	cudaMemcpy(cuda_sha256_vars_in, sha256_vars, 32, cudaMemcpyHostToDevice);
+	hash_and_check<<<16384, 256>>>(cuda_header_w_in, cuda_target_in, cuda_sha256_vars_in, cuda_sha256_state_in, cuda_success_out, cuda_nonce_out);
 	cudaDeviceSynchronize();
 
 	// Get the result and return
@@ -200,8 +202,9 @@ extern "C" bool hash_iteration(BlockHeader* block_header) {
 
 extern "C" void hash_cleanup() {
 	// Free memory on device
-	cudaFree(cuda_header_m_in);
+	cudaFree(cuda_header_w_in);
 	cudaFree(cuda_target_in);
+	cudaFree(cuda_sha256_vars_in);
 	cudaFree(cuda_sha256_state_in);
 	cudaFree(cuda_success_out);
 	cudaFree(cuda_nonce_out);
