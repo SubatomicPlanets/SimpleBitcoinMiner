@@ -11,7 +11,7 @@
 
 // External CUDA definitions
 extern "C" void hash_init(uint32_t* sha256_state, uint32_t target);
-extern "C" bool hash_iteration(BlockHeader* block_header);
+extern "C" bool hash_iteration(BlockHeader* block_header, uint32_t* sha256_vars);
 extern "C" void hash_cleanup();
 
 int main() {
@@ -105,12 +105,14 @@ int main() {
 	// Main loop
 	auto exact_timer = std::chrono::steady_clock::now();
 	uint64_t tried_count = 0;
+	uint32_t sha256_3rounds_buffer[8];
 	while (true) {
 		// Update block data
 		block_header.current_time = static_cast<uint32_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+		cpu_sha256_3rounds(cpu_sha256_ctx.state, sha256_3rounds_buffer, reinterpret_cast<uint8_t*>(&block_header) + 64);
 
 		// Hashing
-		if (hash_iteration(&block_header)) {
+		if (hash_iteration(&block_header, sha256_3rounds_buffer)) {
 			std::cout << "SUCCESS!" << std::endl;
 			std::cout << "NONCE: " << block_header.nonce << std::endl;
 			break;
