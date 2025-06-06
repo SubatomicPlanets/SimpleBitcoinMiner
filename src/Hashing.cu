@@ -70,10 +70,9 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_w_in,
 		// First hash (finish second chunk, first chunk + 3 rounds of second chunk are already precomputed on CPU)
 #pragma unroll
 		for (uint8_t i = 3; i < 64; ++i) {
-			if (i == 3) t1 = h + EP1(e) + CH(e, f, g) + 0xe9b5dba5 + block_i + iter;
-			else if (i == 4) t1 = h + EP1(e) + CH(e, f, g) + 0xb956c25b; // s_dev_k[i] + w[i]
+			if (i < 5) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + w[i];
 			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i];
-			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + 0xc19bf3f4; // s_dev_k[i] + w[i]
+			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + w[i];
 			else {
 				uint32_t new_w = SIG1(w[14]) + w[9] + SIG0(w[1]) + w[0];
 				#pragma unroll
@@ -120,7 +119,7 @@ __global__ void hash_and_check(const uint32_t* __restrict__ header_w_in,
 		for (uint8_t i = 0; i < 63; ++i) {
 			if (i < 9) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + w[i];
 			else if (i < 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i];
-			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + 0xc19bf274; // s_dev_k[i] + w[i]
+			else if (i == 15) t1 = h + EP1(e) + CH(e, f, g) + s_dev_k[i] + w[i];
 			else {
 				uint32_t new_w = SIG1(w[14]) + w[9] + SIG0(w[1]) + w[0];
 				#pragma unroll
