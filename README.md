@@ -7,6 +7,7 @@ It is obviously not profitable on a simple PC. On an RTX 3060 for example it wou
 - Windows
 - CUDA-capable GPU
 - An internet connection
+- C++ and CUDA build support
 
 ## How to Use
 To get started, you'll need to customize a few parts of the code before building and running it.
@@ -57,7 +58,5 @@ cmake --build . --config Release
 - Optimists who think they’re lucky enough to mine a block with this code!
 
 ## Disclaimer
-I built this in two weeks with no prior Bitcoin or CMake experience.  
-Testing was minimal. If you mine a block it might not get sent to the node properly and you won't get a reward...  
-Let me know if you find any bugs or things that can be improved!  
+Testing was minimal. Let me know if you find any bugs or things that can be improved!  
 Use at your own risk. I’m not responsible for anything you do. I just want to share my code :)
